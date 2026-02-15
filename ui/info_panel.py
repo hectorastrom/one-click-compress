@@ -76,13 +76,13 @@ class InfoPanel(QWidget):
 
         # Metrics line
         cos_mean = results.get("cos_mean", 0)
-        latency_ratio = results.get("latency_ratio", 0)
+        latency_speedup = results.get("latency_speedup", 0)
         parts = [f"Cosine: {cos_mean:.4f}"]
-        if latency_ratio > 0:
-            parts.append(f"Latency: {latency_ratio:.2f}x")
+        if latency_speedup > 0:
+            parts.append(f"Speedup: {latency_speedup:.2f}x")
         if results.get("argmax_supported"):
-            agreement = results.get("argmax_agreement", 0)
-            parts.append(f"Agreement: {agreement:.1%}")
+            agreement_pct = results.get("argmax_agreement_pct", 0)
+            parts.append(f"Agreement: {agreement_pct:.1f}%")
 
         self._estimate_label.setText("  |  ".join(parts))
         self._estimate_label.setStyleSheet(f"color: {styles.ACCENT_SUCCESS};")
