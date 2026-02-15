@@ -54,28 +54,55 @@ class InfoPanel(QWidget):
             self._estimate_label.setText("")
 
     def show_results(self, results: dict):
-        fp32 = results.get("fp32_mb", 0)
-        pte = results.get("pte_mb", 0)
-        ratio = fp32 / pte if pte > 0 else 0
+        # Size info — compute from output file paths
+        delta_pct = results.get("size_delta_pct", 0)
+        pte_path = results.get("pte", "")
+        int8_path = results.get("int8_pt2", "")
 
-        self._model_label.setText(
-            f"FP32: {fp32:.1f} MB  |  INT8: {results.get('int8_mb', 0):.1f} MB  |  PTE: {pte:.1f} MB"
-        )
+        # Compute actual file sizes from paths
+        pte_mb = _file_size_mb(pte_path)
+        int8_mb = _file_size_mb(int8_path)
+
+        size_parts = []
+        if int8_mb > 0:
+            size_parts.append(f"INT8: {int8_mb:.1f} MB")
+        if pte_mb > 0:
+            size_parts.append(f"PTE: {pte_mb:.1f} MB")
+        if delta_pct != 0:
+            size_parts.append(f"{delta_pct:+.1f}%")
+
+        self._model_label.setText("  |  ".join(size_parts) if size_parts else "Compression complete")
         self._model_label.setStyleSheet(f"color: {styles.TEXT_PRIMARY};")
 
-        self._estimate_label.setText(f"Compressed {ratio:.1f}x")
+        # Metrics line
+        cos_mean = results.get("cos_mean", 0)
+        latency_ratio = results.get("latency_ratio", 0)
+        parts = [f"Cosine: {cos_mean:.4f}"]
+        if latency_ratio > 0:
+            parts.append(f"Latency: {latency_ratio:.2f}x")
+        if results.get("argmax_supported"):
+            agreement = results.get("argmax_agreement", 0)
+            parts.append(f"Agreement: {agreement:.1%}")
+
+        self._estimate_label.setText("  |  ".join(parts))
         self._estimate_label.setStyleSheet(f"color: {styles.ACCENT_SUCCESS};")
 
-        verdict = results.get("verdict", "")
-        cos_mean = results.get("cos_mean", 0)
-        self._verdict_label.setText(f"Quality: {verdict}  (cos={cos_mean:.4f})")
-        # Color by verdict severity
-        if "EXCELLENT" in verdict or "GOOD" in verdict:
+        # Verdict
+        verdict_text = ""
+        if cos_mean > 0.999:
+            verdict_text = "Excellent — outputs near-identical to FP32"
+        elif cos_mean > 0.99:
+            verdict_text = "Good — minor drift, unlikely to affect accuracy"
+        elif cos_mean > 0.95:
+            verdict_text = "Acceptable — some drift, validate on your task"
+        else:
+            verdict_text = "Degraded — significant loss, try more calibration data"
+
+        if cos_mean > 0.95:
             self._verdict_label.setStyleSheet(f"color: {styles.ACCENT_SUCCESS};")
-        elif "ACCEPTABLE" in verdict:
-            self._verdict_label.setStyleSheet(f"color: {styles.TEXT_SECONDARY};")
         else:
             self._verdict_label.setStyleSheet("color: #ef4444;")
+        self._verdict_label.setText(verdict_text)
 
     def show_error(self, message: str):
         self._model_label.setText(f"Error: {message}")
@@ -93,3 +120,10 @@ class InfoPanel(QWidget):
         self._model_label.setStyleSheet(f"color: {styles.TEXT_SECONDARY};")
         self._estimate_label.setText("")
         self._verdict_label.setText("")
+
+
+def _file_size_mb(path: str) -> float:
+    try:
+        return os.path.getsize(path) / (1024 * 1024)
+    except OSError:
+        return 0.0

@@ -1,7 +1,6 @@
 from pathlib import Path
 
 from PyQt6.QtCore import QObject, QThread, Qt, pyqtSignal
-from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -13,9 +12,8 @@ from PyQt6.QtWidgets import (
 from . import styles
 from .blob_widget import BlobDropWidget
 from .compress_button import CompressButton
-from .compression_card import CompressionCard
 from .info_panel import InfoPanel
-from .resources import chomnom_idle, chomnom_scaled
+from .resources import logo_scaled
 
 
 # ── Compression worker (runs in background thread) ────────────
@@ -55,9 +53,9 @@ class _CompressionWorker(QObject):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("One-Click-Compress")
-        self.setMinimumSize(780, 680)
-        self.resize(800, 700)
+        self.setWindowTitle("Chomnom")
+        self.setMinimumSize(560, 560)
+        self.resize(600, 600)
         self.setStyleSheet(styles.main_window_stylesheet())
 
         self._worker_thread: QThread | None = None
@@ -68,73 +66,11 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(40, 28, 40, 24)
         root.setSpacing(20)
 
-        # ── Header ─────────────────────────────────────────────
-        header = QHBoxLayout()
-        header.setSpacing(14)
-
-        icon_label = QLabel()
-        icon_pm = chomnom_scaled(chomnom_idle(), 44)
-        icon_label.setPixmap(icon_pm)
-        icon_label.setFixedSize(44, 44)
-        header.addWidget(icon_label, alignment=Qt.AlignmentFlag.AlignVCenter)
-
-        title_col = QVBoxLayout()
-        title_col.setSpacing(2)
-
-        title = QLabel("One-Click-Compress")
-        title_font = QFont(styles.font_family())
-        title_font.setPointSize(styles.FONT_SIZE_TITLE)
-        title_font.setWeight(QFont.Weight.Bold)
-        title.setFont(title_font)
-        title.setStyleSheet(f"color: {styles.TEXT_PRIMARY};")
-        title_col.addWidget(title)
-
-        tagline = QLabel("Shrink your model to the edge!")
-        tag_font = QFont(styles.font_family())
-        tag_font.setPointSize(styles.FONT_SIZE_TAGLINE)
-        tagline.setFont(tag_font)
-        tagline.setStyleSheet(f"color: {styles.TEXT_SECONDARY};")
-        title_col.addWidget(tagline)
-
-        header.addLayout(title_col)
-        header.addStretch()
-        root.addLayout(header)
-
-        # ── Separator line ─────────────────────────────────────
-        sep = QWidget()
-        sep.setFixedHeight(1)
-        sep.setStyleSheet(f"background-color: {styles.BG_CARD};")
-        root.addWidget(sep)
-
-        # ── Compression technique cards ────────────────────────
-        cards_layout = QHBoxLayout()
-        cards_layout.setSpacing(14)
-        cards_layout.addStretch()
-
-        self._quant_card = CompressionCard(
-            title="Quantization",
-            description="INT8 weight compression",
-            enabled=True,
-            selected=True,
-        )
-        cards_layout.addWidget(self._quant_card)
-
-        self._prune_card = CompressionCard(
-            title="Pruning",
-            description="Remove redundant weights",
-            enabled=False,
-        )
-        cards_layout.addWidget(self._prune_card)
-
-        self._distill_card = CompressionCard(
-            title="Distillation",
-            description="Knowledge transfer",
-            enabled=False,
-        )
-        cards_layout.addWidget(self._distill_card)
-
-        cards_layout.addStretch()
-        root.addLayout(cards_layout)
+        # ── Header — centered logo ─────────────────────────────
+        logo_label = QLabel()
+        logo_label.setPixmap(logo_scaled(340))
+        logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        root.addWidget(logo_label)
 
         # ── Blob drop zones ────────────────────────────────────
         blobs_layout = QHBoxLayout()
@@ -206,10 +142,13 @@ class MainWindow(QMainWindow):
         if not dataset or not model:
             return
 
-        # Disable button and show progress
         self._compress_btn.set_ready(False)
         self._compress_btn.setText("COMPRESSING...")
         self._info_panel.show_progress("Starting compression pipeline...")
+
+        # Start chewing animation on both blobs
+        self._dataset_blob.start_chewing()
+        self._model_blob.start_chewing()
 
         # Launch worker thread
         self._worker_thread = QThread()
@@ -229,11 +168,15 @@ class MainWindow(QMainWindow):
         self._info_panel.show_progress(message)
 
     def _on_compress_finished(self, results: dict):
+        self._dataset_blob.stop_chewing()
+        self._model_blob.stop_chewing()
         self._compress_btn.setText("COMPRESS")
         self._check_readiness()
         self._info_panel.show_results(results)
 
     def _on_compress_error(self, message: str):
+        self._dataset_blob.stop_chewing()
+        self._model_blob.stop_chewing()
         self._compress_btn.setText("COMPRESS")
         self._check_readiness()
         self._info_panel.show_error(message)

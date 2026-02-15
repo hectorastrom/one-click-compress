@@ -7,6 +7,7 @@ from PyQt6.QtCore import (
     QParallelAnimationGroup,
     QRectF,
     QSequentialAnimationGroup,
+    QTimer,
     Qt,
     pyqtProperty,
     pyqtSignal,
@@ -15,9 +16,19 @@ from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import QWidget
 
 from . import styles
-from .resources import chomnom_closed, chomnom_idle, chomnom_open, chomnom_scaled
+from .resources import (
+    chomnom_chew_1,
+    chomnom_chew_2,
+    chomnom_closed,
+    chomnom_idle,
+    chomnom_open,
+    chomnom_scaled,
+)
 
 _IMG_SIZE = 120
+
+# Chewing animation frame sequence: closed -> chew_1 -> chew_2 -> chew_1 -> (repeat)
+_CHEW_SEQUENCE_FUNCS = [chomnom_closed, chomnom_chew_1, chomnom_chew_2, chomnom_chew_1]
 
 
 class BlobState(Enum):
@@ -25,6 +36,7 @@ class BlobState(Enum):
     HOVER = auto()
     REJECTED = auto()
     ACCEPTED = auto()
+    CHEWING = auto()
 
 
 _STATE_PIXMAP = {
@@ -58,6 +70,10 @@ class BlobDropWidget(QWidget):
         # Animated property backing fields
         self._body_scale = 1.0
         self._bounce_offset = 0.0
+
+        # Chewing animation state
+        self._chew_timer: QTimer | None = None
+        self._chew_frame_index = 0
 
         self.setAcceptDrops(True)
         self.setFixedSize(200, 210)
@@ -110,6 +126,8 @@ class BlobDropWidget(QWidget):
     # ── State transitions ──────────────────────────────────────
 
     def _animate_to_state(self, state: BlobState):
+        if state == BlobState.CHEWING:
+            return  # chewing is handled by start_chewing()
         self._state = state
         self._pixmap = chomnom_scaled(_STATE_PIXMAP[state](), _IMG_SIZE)
 
@@ -130,6 +148,34 @@ class BlobDropWidget(QWidget):
             group.addAnimation(anim)
         group.start()
 
+    # ── Chewing animation ──────────────────────────────────────
+
+    def start_chewing(self):
+        """Start the chewing loop animation (closed -> chew_1 -> chew_2 -> chew_1 -> ...)"""
+        self._state = BlobState.CHEWING
+        self._chew_frame_index = 0
+        self._pixmap = chomnom_scaled(_CHEW_SEQUENCE_FUNCS[0](), _IMG_SIZE)
+        self.setAcceptDrops(False)
+
+        self._chew_timer = QTimer(self)
+        self._chew_timer.setInterval(250)
+        self._chew_timer.timeout.connect(self._advance_chew_frame)
+        self._chew_timer.start()
+        self.update()
+
+    def _advance_chew_frame(self):
+        self._chew_frame_index = (self._chew_frame_index + 1) % len(_CHEW_SEQUENCE_FUNCS)
+        self._pixmap = chomnom_scaled(_CHEW_SEQUENCE_FUNCS[self._chew_frame_index](), _IMG_SIZE)
+        self.update()
+
+    def stop_chewing(self):
+        """Stop chewing and return to ACCEPTED state."""
+        if self._chew_timer is not None:
+            self._chew_timer.stop()
+            self._chew_timer = None
+        self.setAcceptDrops(True)
+        self._animate_to_state(BlobState.ACCEPTED)
+
     # ── Drag and drop ──────────────────────────────────────────
 
     def _matches_filter(self, path: str) -> bool:
@@ -137,13 +183,11 @@ class BlobDropWidget(QWidget):
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
-            # Always accept so we can show accept/reject feedback
             event.acceptProposedAction()
             for url in event.mimeData().urls():
                 if self._matches_filter(url.toLocalFile()):
                     self._animate_to_state(BlobState.HOVER)
                     return
-            # No matching files — show rejected
             self._animate_to_state(BlobState.REJECTED)
             return
         event.ignore()
@@ -161,13 +205,12 @@ class BlobDropWidget(QWidget):
                 self.file_accepted.emit(path)
                 event.acceptProposedAction()
                 return
-        # Wrong file type — snap back
         prev = BlobState.ACCEPTED if self._accepted_path else BlobState.RESTING
         self._animate_to_state(prev)
         event.ignore()
 
     def mouseDoubleClickEvent(self, event):
-        if self._accepted_path:
+        if self._accepted_path and self._state != BlobState.CHEWING:
             self._accepted_path = None
             self._animate_to_state(BlobState.RESTING)
             self.file_cleared.emit()
@@ -187,7 +230,10 @@ class BlobDropWidget(QWidget):
         # ── Drop zone background with dashed/solid border ──────
         p.setBrush(QColor(styles.BG_CARD))
 
-        if self._state == BlobState.ACCEPTED:
+        if self._state == BlobState.CHEWING:
+            pen = QPen(QColor(styles.ACCENT_PRIMARY), 2)
+            pen.setStyle(Qt.PenStyle.SolidLine)
+        elif self._state == BlobState.ACCEPTED:
             pen = QPen(QColor(styles.ACCENT_SUCCESS), 2)
             pen.setStyle(Qt.PenStyle.SolidLine)
         elif self._state == BlobState.HOVER:
