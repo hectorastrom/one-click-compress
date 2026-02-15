@@ -1,0 +1,243 @@
+{
+  "model_name": "clip-vit-b",
+  "created_at": "2026-02-15T05:51:22.574886",
+  "total_duration_ms": 157819.76137400125,
+  "final_recommendation": "The 'baseline_fp32' configuration is recommended if accuracy is the primary concern, as it maintains the highest accuracy. However, if model size is a critical factor, the 'mixed_precision' configuration offers a significant reduction in size with a relatively small drop in accuracy. Consider the deployment environment and whether latency is a critical factor when choosing between these configurations.",
+  "steps": [
+    {
+      "step_number": 1,
+      "agent_role": "Scanner",
+      "agent_icon": "\ud83d\udd0d",
+      "title": "Model Architecture & Beta Distribution Analysis",
+      "input_summary": "",
+      "output_text": "Model: clip-vit-b (149,620,737 parameters, 571 MB)\nArchitecture: transformer\nLayers analyzed: 203\nAvg sensitivity: 0.135\nHigh-sensitivity layers: ['clip_model.vision_model.pre_layrnorm', 'clip_model.text_model.encoder.layers.11.layer_norm2', 'clip_model.text_model.final_layer_norm', 'clip_model.vision_model.encoder.layers.0.layer_norm2']\n\nMost sensitive layers (Beta distribution analysis):\n  clip_model.vision_model.pre_layrnorm: sensitivity=0.818, Beta(\u03b1=0.39, \u03b2=3.36), kurtosis=7.94\n  clip_model.text_model.encoder.layers.11.layer_norm2: sensitivity=0.550, Beta(\u03b1=1.53, \u03b2=8.59), kurtosis=28.44\n  clip_model.text_model.final_layer_norm: sensitivity=0.550, Beta(\u03b1=1.10, \u03b2=7.58), kurtosis=37.75\n  clip_model.vision_model.encoder.layers.0.layer_norm2: sensitivity=0.550, Beta(\u03b1=1.87, \u03b2=10.25), kurtosis=16.70\n  clip_model.text_model.embeddings.position_embedding: sensitivity=0.400, Beta(\u03b1=111.89, \u03b2=392.36), kurtosis=220.80\n  clip_model.text_model.encoder.layers.0.layer_norm1: sensitivity=0.400, Beta(\u03b1=5.47, \u03b2=6.77), kurtosis=19.54\n  clip_model.text_model.encoder.layers.0.mlp.fc1: sensitivity=0.400, Beta(\u03b1=123.46, \u03b2=672.17), kurtosis=99.18\n  clip_model.text_model.encoder.layers.0.mlp.fc2: sensitivity=0.400, Beta(\u03b1=296.75, \u03b2=452.32), kurtosis=10.76",
+      "duration_ms": 104885.54308300081,
+      "timestamp": "2026-02-15T05:53:07.472595",
+      "data": {}
+    },
+    {
+      "step_number": 2,
+      "agent_role": "Executor",
+      "agent_icon": "\u26a1",
+      "title": "Baseline FP32 Evaluation",
+      "input_summary": "",
+      "output_text": "Accuracy: 88.50%\nSize: 571 MB\nLatency: 15.8 ms",
+      "duration_ms": 4531.717124998977,
+      "timestamp": "2026-02-15T05:53:12.006803",
+      "data": {}
+    },
+    {
+      "step_number": 3,
+      "agent_role": "Strategist",
+      "agent_icon": "\ud83e\udde0",
+      "title": "Quantization Strategy Proposals",
+      "input_summary": "",
+      "output_text": "The analysis of the sensitivity_table reveals that the most sensitive layers are 'clip_model.vision_model.pre_layrnorm', 'clip_model.text_model.encoder.layers.11.layer_norm2', 'clip_model.text_model.final_layer_norm', and 'clip_model.vision_model.encoder.layers.0.layer_norm2', with sensitivity scores of 0.818 and 0.55 respectively. These layers have high kurtosis values (e.g., 28.4408, 37.7468), indicating heavy tails and potential outliers, which necessitates maintaining higher precision (fp32). The Beta distribution parameters for these layers also suggest skewness or outlier-prone distributions (e.g., beta_alpha < 2 for 'clip_model.vision_model.pre_layrnorm'), reinforcing the need for fp32 precision. Conversely, layers like 'clip_model.vision_model.encoder.layers.7.mlp.fc2' and 'clip_model.vision_model.encoder.layers.4.mlp.fc2' have low sensitivity scores (0.094 and 0.086) and well-behaved Beta distributions (beta_alpha, beta_beta > 2), making them suitable for int8 quantization. The proposed configurations range from conservative (fp16) to aggressive (dynamic_int8) and a smart mixed_precision approach that optimizes precision based on sensitivity analysis.\n\nProposed configs:\n  \u2022 fp16\n  \u2022 dynamic_int8\n  \u2022 mixed_precision (per-layer: 49 rules)",
+      "duration_ms": 10926.048208000793,
+      "timestamp": "2026-02-15T05:53:22.933834",
+      "data": {
+        "configs": [
+          {
+            "method": "fp16",
+            "target_layers": "all",
+            "extra_params": {}
+          },
+          {
+            "method": "dynamic_int8",
+            "target_layers": "all",
+            "extra_params": {}
+          },
+          {
+            "method": "mixed_precision",
+            "target_layers": "all",
+            "extra_params": {
+              "default_precision": "int8"
+            },
+            "per_layer_config": {
+              "clip_model.vision_model.pre_layrnorm": {
+                "precision": "fp32"
+              },
+              "clip_model.text_model.encoder.layers.11.layer_norm2": {
+                "precision": "fp32"
+              },
+              "clip_model.text_model.final_layer_norm": {
+                "precision": "fp32"
+              },
+              "clip_model.vision_model.encoder.layers.0.layer_norm2": {
+                "precision": "fp32"
+              },
+              "clip_model.text_model.embeddings.position_embedding": {
+                "precision": "fp16"
+              },
+              "clip_model.text_model.encoder.layers.0.layer_norm1": {
+                "precision": "fp16"
+              },
+              "clip_model.text_model.encoder.layers.0.mlp.fc1": {
+                "precision": "fp16"
+              },
+              "clip_model.text_model.encoder.layers.0.mlp.fc2": {
+                "precision": "fp16"
+              },
+              "clip_model.text_model.encoder.layers.0.layer_norm2": {
+                "precision": "fp16"
+              },
+              "clip_model.text_model.encoder.layers.1.layer_norm1": {
+                "precision": "fp16"
+              },
+              "clip_model.text_model.encoder.layers.1.layer_norm2": {
+                "precision": "fp16"
+              },
+              "clip_model.text_model.encoder.layers.2.layer_norm1": {
+                "precision": "fp16"
+              },
+              "clip_model.text_model.encoder.layers.2.layer_norm2": {
+                "precision": "fp16"
+              },
+              "clip_model.text_model.encoder.layers.3.layer_norm1": {
+                "precision": "fp16"
+              },
+              "clip_model.text_model.encoder.layers.3.layer_norm2": {
+                "precision": "fp16"
+              },
+              "clip_model.text_model.encoder.layers.4.layer_norm1": {
+                "precision": "fp16"
+              },
+              "clip_model.text_model.encoder.layers.4.layer_norm2": {
+                "precision": "fp16"
+              },
+              "clip_model.text_model.encoder.layers.5.layer_norm1": {
+                "precision": "fp16"
+              },
+              "clip_model.text_model.encoder.layers.5.layer_norm2": {
+                "precision": "fp16"
+              },
+              "clip_model.text_model.encoder.layers.6.layer_norm1": {
+                "precision": "fp16"
+              },
+              "clip_model.text_model.encoder.layers.6.layer_norm2": {
+                "precision": "fp16"
+              },
+              "clip_model.text_model.encoder.layers.7.layer_norm1": {
+                "precision": "fp16"
+              },
+              "clip_model.text_model.encoder.layers.7.layer_norm2": {
+                "precision": "fp16"
+              },
+              "clip_model.text_model.encoder.layers.8.layer_norm1": {
+                "precision": "fp16"
+              },
+              "clip_model.text_model.encoder.layers.8.layer_norm2": {
+                "precision": "fp16"
+              },
+              "clip_model.text_model.encoder.layers.9.layer_norm1": {
+                "precision": "fp16"
+              },
+              "clip_model.text_model.encoder.layers.9.layer_norm2": {
+                "precision": "fp16"
+              },
+              "clip_model.text_model.encoder.layers.10.layer_norm1": {
+                "precision": "fp16"
+              },
+              "clip_model.text_model.encoder.layers.10.layer_norm2": {
+                "precision": "fp16"
+              },
+              "clip_model.text_model.encoder.layers.11.layer_norm1": {
+                "precision": "fp16"
+              },
+              "clip_model.vision_model.encoder.layers.2.layer_norm1": {
+                "precision": "fp16"
+              },
+              "clip_model.vision_model.encoder.layers.2.layer_norm2": {
+                "precision": "fp16"
+              },
+              "clip_model.vision_model.encoder.layers.3.layer_norm2": {
+                "precision": "fp16"
+              },
+              "clip_model.vision_model.encoder.layers.4.layer_norm2": {
+                "precision": "fp16"
+              },
+              "clip_model.vision_model.encoder.layers.5.layer_norm1": {
+                "precision": "fp16"
+              },
+              "clip_model.vision_model.encoder.layers.5.layer_norm2": {
+                "precision": "fp16"
+              },
+              "clip_model.vision_model.encoder.layers.6.layer_norm1": {
+                "precision": "fp16"
+              },
+              "clip_model.vision_model.encoder.layers.6.layer_norm2": {
+                "precision": "fp16"
+              },
+              "clip_model.vision_model.encoder.layers.7.layer_norm1": {
+                "precision": "fp16"
+              },
+              "clip_model.vision_model.encoder.layers.7.layer_norm2": {
+                "precision": "fp16"
+              },
+              "clip_model.vision_model.encoder.layers.8.layer_norm1": {
+                "precision": "fp16"
+              },
+              "clip_model.vision_model.encoder.layers.8.layer_norm2": {
+                "precision": "fp16"
+              },
+              "clip_model.vision_model.encoder.layers.9.layer_norm1": {
+                "precision": "fp16"
+              },
+              "clip_model.vision_model.encoder.layers.9.layer_norm2": {
+                "precision": "fp16"
+              },
+              "clip_model.vision_model.encoder.layers.10.layer_norm1": {
+                "precision": "fp16"
+              },
+              "clip_model.vision_model.encoder.layers.10.layer_norm2": {
+                "precision": "fp16"
+              },
+              "clip_model.vision_model.encoder.layers.11.layer_norm1": {
+                "precision": "fp16"
+              },
+              "clip_model.vision_model.encoder.layers.11.layer_norm2": {
+                "precision": "fp16"
+              },
+              "clip_model.vision_model.post_layernorm": {
+                "precision": "fp16"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "step_number": 4,
+      "agent_role": "Critic",
+      "agent_icon": "\ud83d\udd0e",
+      "title": "Critical Review & Improvement",
+      "input_summary": "",
+      "output_text": "The proposed quantization configurations for the 'clip-vit-b' model show a reasonable attempt to balance precision and performance. However, there are several areas where improvements can be made. The 'fp16' and 'dynamic_int8' methods target all layers, which may not be optimal given the sensitivity analysis. The 'mixed_precision' configuration attempts to protect certain high-sensitivity layers by using 'fp32' precision, but it does not fully leverage the sensitivity data. For instance, layers with a sensitivity greater than 0.3 should be considered for protection, yet some are only assigned 'fp16' precision. Additionally, the Beta distribution analysis, which could provide insights into the distribution of layer outputs, does not seem to have been fully utilized in deciding which layers to protect. The current configuration also includes many layers with 'fp16' precision that may not require such protection, potentially leading to unnecessary computational overhead.\n\nIssues:\n  \u26a0 The 'fp16' and 'dynamic_int8' configurations apply uniformly to all layers without considering sensitivity, which could lead to suboptimal performance.\n  \u26a0 The 'mixed_precision' configuration does not protect all layers with sensitivity > 0.3 with 'fp32', which could impact model accuracy.\n  \u26a0 Several layers with low sensitivity are unnecessarily protected with 'fp16', which could be optimized further.\n  \u26a0 The Beta distribution analysis is not explicitly used to inform the precision decisions in the 'mixed_precision' configuration.\n\nFinal configs: ['mixed_precision']",
+      "duration_ms": 12555.057708001186,
+      "timestamp": "2026-02-15T05:53:35.491625",
+      "data": {}
+    },
+    {
+      "step_number": 5,
+      "agent_role": "Executor",
+      "agent_icon": "\u26a1",
+      "title": "mixed_precision \u2014 Results",
+      "input_summary": "",
+      "output_text": "Accuracy: 87.00% (baseline: 88.50%)\nSize: 225 MB \u2192 2.54x compression\nLatency: 99.8 ms\nPer-layer rules applied: 49",
+      "duration_ms": 19750.191875000382,
+      "timestamp": "2026-02-15T05:53:55.244209",
+      "data": {}
+    },
+    {
+      "step_number": 6,
+      "agent_role": "Analyst",
+      "agent_icon": "\ud83d\udcca",
+      "title": "Final Analysis & Recommendation",
+      "input_summary": "",
+      "output_text": "The results show two configurations: 'baseline_fp32' and 'mixed_precision'. The 'baseline_fp32' configuration maintains the highest accuracy at 88.5% with the original model size of 570.96 MB and a latency of 15.758 ms. The 'mixed_precision' configuration significantly reduces the model size to 224.62 MB, achieving a compression ratio of 2.54, but at the cost of reduced accuracy (87.0%) and increased latency (99.817 ms). The 'mixed_precision' configuration was evaluated on a CPU, which may explain the higher latency compared to the 'baseline_fp32' configuration. Both configurations are Pareto-optimal: 'baseline_fp32' for maximum accuracy and 'mixed_precision' for maximum compression.\n\nThe 'baseline_fp32' configuration is recommended if accuracy is the primary concern, as it maintains the highest accuracy. However, if model size is a critical factor, the 'mixed_precision' configuration offers a significant reduction in size with a relatively small drop in accuracy. Consider the deployment environment and whether latency is a critical factor when choosing between these configurations.",
+      "duration_ms": 5171.203374999095,
+      "timestamp": "2026-02-15T05:54:00.417020",
+      "data": {}
+    }
+  ]
+}

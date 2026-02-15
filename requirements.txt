@@ -1,0 +1,11 @@
+torch>=2.1.0
+torchvision>=0.16.0
+transformers>=4.36.0
+bitsandbytes>=0.41.0
+scipy>=1.11.0
+openai>=1.12.0
+anthropic>=0.18.0
+matplotlib>=3.8.0
+numpy>=1.24.0
+rich>=13.0.0
+pyyaml>=6.0
