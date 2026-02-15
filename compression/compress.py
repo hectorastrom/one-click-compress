@@ -8,7 +8,7 @@ One-shot compression pipeline: INT8 quantize -> XNNPACK .pte -> evaluate.
 
 Takes any .pt2 exported model and a saved dataset (.pt from save_dataset),
 runs post-training quantization with calibration, lowers to a deployable
-.pte file, and evaluates FP32 vs INT8 quality (cosine similarity + sizes).
+.pte file, and runs the evaluation suite (cosine + argmax by default).
 
 Usage:
     python -m compression.compress model.pt2 calibration.pt
@@ -23,7 +23,6 @@ from pathlib import Path
 
 import torch
 import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader
 
 # Ensure quantized_decomposed ops are registered before loading INT8 .pt2
 from torchao.quantization.pt2e.quantize_pt2e import (  # noqa: F401
@@ -34,6 +33,7 @@ from torchao.quantization.pt2e.quantize_pt2e import (  # noqa: F401
 from compression.utils import SavedDataset
 from compression.quantize import universal_compress
 from compression.lower_to_pte import lower_to_pte
+from eval.eval_suite import run_eval_suite
 
 
 W = 60  # column width for output formatting
@@ -264,6 +264,10 @@ def _validate_inputs(model_path: str, dataset_path: str) -> None:
         )
 
 
+def _size_mb(path: str) -> float:
+    return Path(path).stat().st_size / (1024 * 1024)
+
+
 # ---------------------------------------------------------------------------
 # Full pipeline
 # ---------------------------------------------------------------------------
@@ -289,7 +293,7 @@ def compress_and_evaluate(
         batch_size: Batch size used during calibration.
         num_calibration_batches: Batches fed through the model for
             observer calibration.
-        num_eval_samples: Samples used for FP32-vs-INT8 comparison.
+        num_eval_samples: Samples used for FP32-vs-PTE evaluation.
 
     Returns:
         Dict containing output paths and all evaluation metrics.
@@ -345,20 +349,26 @@ def compress_and_evaluate(
             sample_x=sample_x,
         )
 
-    # -- Step 3: Evaluate FP32 vs INT8 -------------------------------------
-    _step(3, 3, "Evaluate FP32 vs INT8")
-    metrics = evaluate_models(
-        fp32_pt2_path=model_path,
-        int8_pt2_path=int8_pt2,
-        pte_path=pte,
+    # -- Step 3: Evaluation suite -------------------------------------------
+    _step(3, 3, "Run evaluation suite")
+    metrics = run_eval_suite(
+        fp32_model_path=model_path,
+        candidate_model_path=pte,
         dataset=dataset,
         num_eval_samples=num_eval_samples,
+        eval_cosine=True,
+        eval_argmax=True,
     )
     if debug and debug_info is not None:
         pte_yolo = debug_info["pte"]["yolo"]
         if pte_yolo["available"]:
             metrics["pte_class_abs_max"] = pte_yolo["class_abs_max"]
             metrics["pte_class_nonzero_frac"] = pte_yolo["class_nonzero_frac"]
+
+    fp32_mb = _size_mb(model_path)
+    pte_mb = _size_mb(pte)
+    size_delta_mb = pte_mb - fp32_mb
+    size_delta_pct = ((size_delta_mb / fp32_mb) * 100.0) if fp32_mb > 0 else 0.0
 
     elapsed = time.monotonic() - t0
 
@@ -371,36 +381,63 @@ def compress_and_evaluate(
 
     print()
     print("  Size")
-    _kv("FP32 .pt2:", f"{metrics['fp32_mb']:.2f} MB", indent=4)
-    _kv("INT8 .pt2:", f"{metrics['int8_mb']:.2f} MB", indent=4)
-    _kv("XNNPACK .pte:", f"{metrics['pte_mb']:.2f} MB", indent=4)
-    if metrics["pte_mb"] > 0:
-        ratio = metrics["fp32_mb"] / metrics["pte_mb"]
-        _kv("Compression:", f"{ratio:.1f}x  (FP32 -> .pte)", indent=4)
+    _kv(
+        "Change (.pt2 -> .pte):",
+        f"{size_delta_mb:+.2f} MB ({size_delta_pct:+.1f}%)",
+        indent=4,
+    )
 
     print()
-    print("  Quality")
+    print("  Evaluation")
     _kv("Cosine sim (mean):", f"{metrics['cos_mean']:.6f}", indent=4)
     _kv("Cosine sim (min):", f"{metrics['cos_min']:.6f}", indent=4)
-    _kv("MSE (mean):", f"{metrics['mse_mean']:.6f}", indent=4)
-    _kv("Max abs diff:", f"{metrics['max_abs_diff']:.4f}", indent=4)
-    if metrics.get("yolo_detected"):
+    _kv(
+        "Latency mean (fp32):",
+        f"{metrics['fp32_latency_ms_mean']:.3f} ms",
+        indent=4,
+    )
+    _kv(
+        "Latency mean (pte):",
+        f"{metrics['candidate_latency_ms_mean']:.3f} ms",
+        indent=4,
+    )
+    _kv(
+        "Latency delta (pte):",
+        f"{metrics['latency_delta_ms']:+.3f} ms",
+        indent=4,
+    )
+    _kv(
+        "Latency ratio (pte):",
+        f"{metrics['latency_ratio']:.3f}x",
+        indent=4,
+    )
+    if metrics.get("argmax_supported", False):
         _kv(
-            "INT8 class nonzero:",
-            f"{metrics['int8_class_nonzero_mean']:.6f}",
+            "Argmax top-1 (fp32):",
+            f"{metrics['fp32_top1']:.4f}",
             indent=4,
         )
         _kv(
-            "INT8 class abs max:",
-            f"{metrics['int8_class_abs_max_mean']:.6g}",
+            "Argmax top-1 (pte):",
+            f"{metrics['candidate_top1']:.4f}",
             indent=4,
         )
         _kv(
-            "Class logits collapsed:",
-            "yes" if metrics["class_logits_collapsed"] else "no",
+            "Argmax agreement:",
+            f"{metrics['argmax_agreement']:.4f}",
             indent=4,
         )
-    _kv("Verdict:", metrics["verdict"], indent=4)
+        _kv(
+            "Argmax delta (pte):",
+            f"{metrics['argmax_delta']:+.4f}",
+            indent=4,
+        )
+    else:
+        _kv(
+            "Argmax:",
+            f"skipped ({metrics.get('argmax_reason', 'unsupported output/labels')})",
+            indent=4,
+        )
     if "pte_class_abs_max" in metrics:
         _kv("Debug pte class abs max:", f"{metrics['pte_class_abs_max']:.6g}", indent=4)
         _kv(
@@ -413,136 +450,12 @@ def compress_and_evaluate(
     _kv("Elapsed:", f"{elapsed:.1f}s")
     print("+" + "-" * (W - 2) + "+")
 
-    return {"int8_pt2": int8_pt2, "pte": pte, **metrics}
-
-
-# ---------------------------------------------------------------------------
-# Evaluation
-# ---------------------------------------------------------------------------
-
-def evaluate_models(
-    fp32_pt2_path: str,
-    int8_pt2_path: str,
-    pte_path: str,
-    dataset: Dataset,
-    num_eval_samples: int = 32,
-) -> dict:
-    """Compare FP32 and INT8 q/dq models on file size and output similarity.
-
-    Cosine similarity is computed between the flattened outputs of the
-    FP32 and INT8 models on the same inputs.  The .pte file is included
-    in the size report but cannot be run directly from Python (it is
-    intended for on-device execution via ExecuTorch).
-
-    Args:
-        fp32_pt2_path: Original FP32 .pt2 exported program.
-        int8_pt2_path: Quantized INT8 q/dq .pt2 exported program.
-        pte_path: Lowered XNNPACK .pte file.
-        dataset: Any torch Dataset returning (x, y) tuples.
-        num_eval_samples: How many samples to compare.
-
-    Returns:
-        Dict of metric values.
-    """
-    # -- Load both models ---------------------------------------------------
-    print("Loading FP32 model...")
-    fp32_model = torch.export.load(fp32_pt2_path).module()
-    print("Loading INT8 model...")
-    int8_model = torch.export.load(int8_pt2_path).module()
-
-    # -- File sizes ---------------------------------------------------------
-    fp32_mb = Path(fp32_pt2_path).stat().st_size / (1024 * 1024)
-    int8_mb = Path(int8_pt2_path).stat().st_size / (1024 * 1024)
-    pte_mb = Path(pte_path).stat().st_size / (1024 * 1024)
-
-    # -- Inference comparison -----------------------------------------------
-    loader = DataLoader(dataset, batch_size=1, shuffle=False)
-    n = min(num_eval_samples, len(dataset))
-    print(f"Comparing outputs on {n} samples...")
-
-    cos_sims: list[float] = []
-    mses: list[float] = []
-    max_abs_diffs: list[float] = []
-    int8_class_nonzero_fracs: list[float] = []
-    int8_class_abs_maxes: list[float] = []
-
-    with torch.no_grad():
-        for i, (x, _y) in enumerate(loader):
-            if i >= num_eval_samples:
-                break
-
-            fp32_out = fp32_model(x)
-            int8_out = int8_model(x)
-
-            # Handle models that return tuples (e.g. detection heads)
-            if isinstance(fp32_out, (tuple, list)):
-                fp32_out = fp32_out[0]
-            if isinstance(int8_out, (tuple, list)):
-                int8_out = int8_out[0]
-
-            fp32_flat = fp32_out.flatten().float()
-            int8_flat = int8_out.flatten().float()
-
-            cos_sims.append(
-                F.cosine_similarity(
-                    fp32_flat.unsqueeze(0), int8_flat.unsqueeze(0)
-                ).item()
-            )
-            mses.append(F.mse_loss(fp32_flat, int8_flat).item())
-            max_abs_diffs.append((fp32_flat - int8_flat).abs().max().item())
-
-            yolo_int8 = _yolo_head_stats(int8_out)
-            if yolo_int8["available"]:
-                int8_class_nonzero_fracs.append(yolo_int8["class_nonzero_frac"])
-                int8_class_abs_maxes.append(yolo_int8["class_abs_max"])
-
-    cos_mean = sum(cos_sims) / len(cos_sims)
-    cos_min = min(cos_sims)
-    mse_mean = sum(mses) / len(mses)
-    max_abs_diff = max(max_abs_diffs)
-
-    int8_class_nonzero_mean = (
-        sum(int8_class_nonzero_fracs) / len(int8_class_nonzero_fracs)
-        if int8_class_nonzero_fracs else -1.0
-    )
-    int8_class_abs_max_mean = (
-        sum(int8_class_abs_maxes) / len(int8_class_abs_maxes)
-        if int8_class_abs_maxes else -1.0
-    )
-    yolo_detected = len(int8_class_nonzero_fracs) > 0
-    class_logits_collapsed = (
-        yolo_detected
-        and (
-            int8_class_nonzero_mean < 1e-6
-            or int8_class_abs_max_mean < 1e-8
-        )
-    )
-
-    # -- Verdict ------------------------------------------------------------
-    if class_logits_collapsed:
-        verdict = "BROKEN -- class logits collapsed to zero after quantization"
-    elif cos_mean > 0.999:
-        verdict = "EXCELLENT -- outputs near-identical to FP32"
-    elif cos_mean > 0.99:
-        verdict = "GOOD -- minor drift, unlikely to affect accuracy"
-    elif cos_mean > 0.95:
-        verdict = "ACCEPTABLE -- some drift, validate on your task"
-    else:
-        verdict = "DEGRADED -- significant loss, try more calibration data"
-
     return {
-        "fp32_mb": fp32_mb,
-        "int8_mb": int8_mb,
-        "pte_mb": pte_mb,
-        "cos_mean": cos_mean,
-        "cos_min": cos_min,
-        "mse_mean": mse_mean,
-        "max_abs_diff": max_abs_diff,
-        "verdict": verdict,
-        "yolo_detected": yolo_detected,
-        "int8_class_nonzero_mean": int8_class_nonzero_mean,
-        "int8_class_abs_max_mean": int8_class_abs_max_mean,
-        "class_logits_collapsed": class_logits_collapsed,
+        "int8_pt2": int8_pt2,
+        "pte": pte,
+        "size_delta_mb": size_delta_mb,
+        "size_delta_pct": size_delta_pct,
+        **metrics,
     }
 
 
